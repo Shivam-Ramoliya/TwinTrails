@@ -18,6 +18,11 @@ export default function DRModule() {
     const [path, setPath] = useState([{ x: 0, y: 0 }]);
     const [heading, setHeading] = useState(0);
 
+    // GPS state
+    const [gpsLocation, setGpsLocation] = useState(null);
+    const [gpsError, setGpsError] = useState(null);
+    const watchIdRef = useRef(null);
+
     // System state
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [error, setError] = useState(null);
@@ -267,15 +272,73 @@ export default function DRModule() {
         return () => {
             window.removeEventListener("devicemotion", handleDeviceMotion);
             window.removeEventListener("deviceorientation", handleDeviceOrientation);
+            if (watchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(watchIdRef.current);
+            }
         };
     }, [handleDeviceMotion, handleDeviceOrientation]);
+
+    // GPS tracking
+    useEffect(() => {
+        if (isMonitoring && "geolocation" in navigator) {
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0,
+            };
+
+            const successCallback = (position) => {
+                setGpsLocation({
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    timestamp: position.timestamp,
+                });
+                setGpsError(null);
+            };
+
+            const errorCallback = (error) => {
+                let errorMessage = "GPS error: ";
+                switch (error.code) {
+                    case error.PERMISSION_DENIED:
+                        errorMessage += "User denied GPS access";
+                        break;
+                    case error.POSITION_UNAVAILABLE:
+                        errorMessage += "Location unavailable";
+                        break;
+                    case error.TIMEOUT:
+                        errorMessage += "Request timeout";
+                        break;
+                    default:
+                        errorMessage += "Unknown error";
+                }
+                setGpsError(errorMessage);
+            };
+
+            watchIdRef.current = navigator.geolocation.watchPosition(
+                successCallback,
+                errorCallback,
+                options
+            );
+        } else if (!isMonitoring && watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+        }
+
+        return () => {
+            if (watchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(watchIdRef.current);
+                watchIdRef.current = null;
+            }
+        };
+    }, [isMonitoring]);
 
     return (
         <div className="bg-gray-900 border-r border-gray-700 p-6 overflow-y-auto">
             {/* Header */}
-            <div className="mb-4">
+            <div className="mb-4 text-center">
                 <h2 className="text-2xl font-bold text-green-400 mb-2">
-                    Dead Reckoning (DR)
+                    DR (Dead Reckoning)
                 </h2>
                 <p className="text-xs text-gray-400">
                     Sensor-based positioning using accelerometer and gyroscope
@@ -284,10 +347,10 @@ export default function DRModule() {
 
             {/* Controls */}
             <div className="mb-4">
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap justify-center">
                     <button
                         onClick={isMonitoring ? stopMonitoring : startMonitoring}
-                        className={`flex-1 px-4 py-2 rounded-lg font-bold text-sm ${isMonitoring
+                        className={`px-4 py-2 rounded-lg font-bold text-sm ${isMonitoring
                                 ? "bg-red-500 hover:bg-red-600 text-white"
                                 : "bg-blue-500 hover:bg-blue-600 text-white"
                             } transition-colors`}
@@ -296,20 +359,22 @@ export default function DRModule() {
                     </button>
                     <button
                         onClick={clearPath}
-                        className="flex-1 px-4 py-2 rounded-lg font-bold text-sm bg-gray-600 hover:bg-gray-700 text-white transition-colors"
+                        className="px-4 py-2 rounded-lg font-bold text-sm bg-gray-600 hover:bg-gray-700 text-white transition-colors"
                     >
                         Reset Path
                     </button>
                 </div>
-                {error && <p className="text-red-400 text-xs mt-2">{error}</p>}
+                {error && (
+                    <p className="text-red-400 text-xs mt-2 text-center">{error}</p>
+                )}
                 {isCalibrating && (
-                    <p className="text-yellow-400 text-xs mt-2">
+                    <p className="text-yellow-400 text-xs mt-2 text-center">
                         ⚠️ High magnetic interference detected. Move device in figure-8
                         pattern.
                     </p>
                 )}
                 {!isMonitoring && !error && (
-                    <p className="text-gray-400 text-xs mt-2">
+                    <p className="text-gray-400 text-xs mt-2 text-center">
                         Click "Start Sensors" to begin tracking.
                     </p>
                 )}
@@ -323,18 +388,48 @@ export default function DRModule() {
                 <PathVisualizer path={path} />
             </div>
 
-            {/* Calculated Data */}
+            {/* GPS Actual Position */}
             <div className="mb-6">
                 <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
-                    Calculated Position & Velocity
+                    Actual Position (GPS)
+                </h3>
+                {gpsError ? (
+                    <div className="bg-white/10 p-3 rounded-lg mb-2">
+                        <p className="text-xs text-red-400">{gpsError}</p>
+                    </div>
+                ) : gpsLocation ? (
+                    <div className="space-y-2">
+                        <SensorCard
+                            title="GPS Coordinates"
+                            dataString={`Lat: ${gpsLocation.latitude.toFixed(
+                                6
+                            )}°, Lon: ${gpsLocation.longitude.toFixed(6)}°`}
+                            unit={`±${gpsLocation.accuracy.toFixed(1)}m`}
+                        />
+                    </div>
+                ) : (
+                    <div className="bg-white/10 p-3 rounded-lg mb-2">
+                        <p className="text-xs text-yellow-400">
+                            {isMonitoring
+                                ? "Acquiring GPS signal..."
+                                : "Start sensors to enable GPS"}
+                        </p>
+                    </div>
+                )}
+            </div>
+
+            {/* Measured Position & Velocity (DR) */}
+            <div className="mb-6">
+                <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
+                    Measured Position (Dead Reckoning)
                 </h3>
                 <SensorCard
-                    title="Position (2D)"
+                    title="DR Position (2D)"
                     dataString={format2DData(position)}
                     unit="meters"
                 />
                 <SensorCard
-                    title="Velocity (2D)"
+                    title="Estimated Velocity"
                     dataString={format2DData(velocity)}
                     unit="m/s"
                 />
@@ -360,6 +455,14 @@ export default function DRModule() {
                     dataString={`alpha: ${(heading ?? 0).toFixed(2)}°`}
                     unit="0° = North"
                 />
+            </div>
+
+            {/* Info */}
+            <div className="p-4 text-xs text-gray-400 text-center">
+                <p>Inertial Navigation System | IMU-based Dead Reckoning</p>
+                <p className="mt-1">
+                    <span className="text-green-400">●</span> Sensor Fusion Active
+                </p>
             </div>
         </div>
     );
