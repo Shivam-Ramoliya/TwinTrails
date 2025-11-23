@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import PathVisualizer from "./PathVisualizer";
 import SensorCard from "./SensorCard";
-import { format2DData } from "../utils/formatters";
+import { format2DData, formatSensorData } from "../utils/formatters";
 
 /**
  * SLAMModule - Real-time Visual-Inertial SLAM for Mobile Web
@@ -24,6 +24,16 @@ export default function SLAMModule() {
     const [features, setFeatures] = useState([]);
     const [fps, setFps] = useState(0);
     const [error, setError] = useState(null);
+
+    // GPS state
+    const [gpsLocation, setGpsLocation] = useState(null);
+    const [gpsError, setGpsError] = useState(null);
+    const watchIdRef = useRef(null);
+
+    // Sensor display state
+    const [accelerometerData, setAccelerometerData] = useState(null);
+    const [gyroscopeData, setGyroscopeData] = useState(null);
+    const [orientationData, setOrientationData] = useState(0);
 
     // Refs for state that doesn't trigger re-renders
     const poseRef = useRef({ x: 0, y: 0, heading: 0 });
@@ -378,6 +388,19 @@ export default function SLAMModule() {
             z: gyro.gamma || 0,
         };
 
+        // Update display state
+        setAccelerometerData({
+            x: acc.x || 0,
+            y: acc.y || 0,
+            z: acc.z || 0,
+        });
+
+        setGyroscopeData({
+            alpha: ((gyro.alpha || 0) * 180) / Math.PI,
+            beta: ((gyro.beta || 0) * 180) / Math.PI,
+            gamma: ((gyro.gamma || 0) * 180) / Math.PI,
+        });
+
         // Simple velocity integration with damping
         const dt = 0.016; // ~60Hz
         const damping = 0.95;
@@ -391,6 +414,7 @@ export default function SLAMModule() {
         const alpha = event.alpha ?? event.webkitCompassHeading;
         if (typeof alpha === "number" && !Number.isNaN(alpha)) {
             imuDataRef.current.orientation = alpha * (Math.PI / 180);
+            setOrientationData(alpha);
         }
     }, []);
 
@@ -461,6 +485,12 @@ export default function SLAMModule() {
 
         if (videoRef.current) {
             videoRef.current.srcObject = null;
+        }
+
+        // Stop GPS tracking
+        if (watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
         }
     };
 
@@ -757,38 +787,106 @@ export default function SLAMModule() {
     useEffect(() => {
         return () => {
             stopCamera();
+            if (watchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(watchIdRef.current);
+            }
         };
     }, []);
 
+    // GPS tracking
+    useEffect(() => {
+        if (isRunning && "geolocation" in navigator) {
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 5000,
+                maximumAge: 0,
+            };
+
+            const successCallback = (position) => {
+                setGpsLocation({
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    timestamp: position.timestamp,
+                });
+                setGpsError(null);
+            };
+
+            const errorCallback = (error) => {
+                let errorMessage = "GPS error: ";
+                switch (error.code) {
+                    case error.PERMISSION_DENIED:
+                        errorMessage += "User denied GPS access";
+                        break;
+                    case error.POSITION_UNAVAILABLE:
+                        errorMessage += "Location unavailable";
+                        break;
+                    case error.TIMEOUT:
+                        errorMessage += "Request timeout";
+                        break;
+                    default:
+                        errorMessage += "Unknown error";
+                }
+                setGpsError(errorMessage);
+            };
+
+            watchIdRef.current = navigator.geolocation.watchPosition(
+                successCallback,
+                errorCallback,
+                options
+            );
+        } else if (!isRunning && watchIdRef.current !== null) {
+            navigator.geolocation.clearWatch(watchIdRef.current);
+            watchIdRef.current = null;
+        }
+
+        return () => {
+            if (watchIdRef.current !== null) {
+                navigator.geolocation.clearWatch(watchIdRef.current);
+                watchIdRef.current = null;
+            }
+        };
+    }, [isRunning]);
+
     return (
         <div className="w-full h-full bg-gray-900 text-white overflow-y-auto">
+            {/* Header */}
+            <div className="mb-4 pt-6 text-center">
+                <h2 className="text-2xl font-bold text-blue-400 mb-2">
+                    SLAM (Simultaneous Localization and Mapping)
+                </h2>
+                <p className="text-xs text-gray-400">
+                    Visual-Inertial SLAM | Feature detection with IMU fusion
+                </p>
+            </div>
+
             {/* Control Panel */}
             <div className="p-4 bg-gray-800 border-b border-gray-700">
                 <div className="flex gap-2 flex-wrap justify-center">
                     <button
                         onClick={handleStart}
                         disabled={isRunning}
-                        className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 rounded font-bold transition-colors"
+                        className="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 rounded font-bold transition-colors text-sm"
                     >
                         Start SLAM
                     </button>
                     <button
                         onClick={handleStop}
                         disabled={!isRunning}
-                        className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 rounded font-bold transition-colors"
+                        className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 rounded font-bold transition-colors text-sm"
                     >
                         Stop SLAM
                     </button>
                     <button
                         onClick={handleReset}
-                        className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded font-bold transition-colors"
+                        className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded font-bold transition-colors text-sm"
                     >
                         Reset
                     </button>
                     <button
                         onClick={toggleTorch}
                         disabled={!isRunning}
-                        className={`px-4 py-2 rounded font-bold transition-colors ${torchEnabled
+                        className={`px-4 py-2 rounded font-bold transition-colors text-sm ${torchEnabled
                                 ? "bg-orange-600 hover:bg-orange-700"
                                 : "bg-gray-600 hover:bg-gray-700"
                             } disabled:bg-gray-600`}
@@ -802,8 +900,8 @@ export default function SLAMModule() {
                 )}
             </div>
 
-            {/* Stats Panel */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 p-4 bg-gray-800/50">
+            {/* Stats Panel - Only FPS and Landmarks */}
+            <div className="grid grid-cols-2 gap-2 p-4 bg-gray-800/50">
                 <div className="bg-gray-700 p-2 rounded text-center">
                     <div className="text-xs text-gray-400">FPS</div>
                     <div className="text-lg font-bold text-green-400">{fps}</div>
@@ -814,34 +912,21 @@ export default function SLAMModule() {
                         {landmarkCount}
                     </div>
                 </div>
-                <div className="bg-gray-700 p-2 rounded text-center">
-                    <div className="text-xs text-gray-400">Position</div>
-                    <div className="text-sm font-mono">
-                        {pose.x.toFixed(2)}, {pose.y.toFixed(2)}
-                    </div>
-                </div>
-                <div className="bg-gray-700 p-2 rounded text-center">
-                    <div className="text-xs text-gray-400">Heading</div>
-                    <div className="text-sm font-mono">
-                        {((pose.heading * 180) / Math.PI).toFixed(1)}°
-                    </div>
-                </div>
             </div>
 
             {/* Video & Canvas Display */}
-            <div className="p-4 grid grid-cols-1 gap-4">
+            <div className="p-4">
                 {/* Combined Camera Feed with Feature Detection Overlay */}
-                <div className="bg-gray-800 rounded-lg overflow-hidden">
+                <div className="bg-gray-800 rounded-lg overflow-hidden mb-6">
                     <h3 className="text-xs font-semibold text-gray-400 uppercase p-2 bg-gray-700">
                         Live Camera with Feature Detection
                     </h3>
-                    <div className="relative">
+                    <div className="relative w-full" style={{ paddingBottom: "75%" }}>
                         <video
                             ref={videoRef}
-                            className="absolute top-0 left-0 w-full h-auto opacity-0"
+                            className="absolute top-0 left-0 w-full h-full opacity-0 object-cover"
                             playsInline
                             muted
-                            style={{ maxHeight: "400px" }}
                         />
                         <canvas
                             ref={canvasRef}
@@ -853,8 +938,7 @@ export default function SLAMModule() {
                             ref={processCanvasRef}
                             width={640}
                             height={480}
-                            className="w-full h-auto"
-                            style={{ maxHeight: "400px", display: "block" }}
+                            className="absolute top-0 left-0 w-full h-full object-cover"
                         />
                         {isRunning && (
                             <div className="absolute top-2 left-2 bg-black/50 px-2 py-1 rounded text-xs">
@@ -865,18 +949,56 @@ export default function SLAMModule() {
                     </div>
                 </div>
 
-                {/* SLAM Calculated Data (like DR) */}
-                <div className="mb-2">
+                {/* SLAM Path Trajectory */}
+                <div className="mb-6">
+                    <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-2">
+                        SLAM Path Trajectory
+                    </h3>
+                    <PathVisualizer path={trajectory} />
+                </div>
+
+                {/* GPS Actual Position */}
+                <div className="mb-6">
                     <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
-                        SLAM Estimated Position & Velocity
+                        Actual Position (GPS)
+                    </h3>
+                    {gpsError ? (
+                        <div className="bg-white/10 p-3 rounded-lg mb-2">
+                            <p className="text-xs text-red-400">{gpsError}</p>
+                        </div>
+                    ) : gpsLocation ? (
+                        <div className="space-y-2">
+                            <SensorCard
+                                title="GPS Coordinates"
+                                dataString={`Lat: ${gpsLocation.latitude.toFixed(
+                                    6
+                                )}°, Lon: ${gpsLocation.longitude.toFixed(6)}°`}
+                                unit={`±${gpsLocation.accuracy.toFixed(1)}m`}
+                            />
+                        </div>
+                    ) : (
+                        <div className="bg-white/10 p-3 rounded-lg mb-2">
+                            <p className="text-xs text-yellow-400">
+                                {isRunning
+                                    ? "Acquiring GPS signal..."
+                                    : "Start SLAM to enable GPS"}
+                            </p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Measured Position (SLAM) */}
+                <div className="mb-6">
+                    <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
+                        Measured Position (SLAM)
                     </h3>
                     <SensorCard
-                        title="Position (2D)"
+                        title="SLAM Position (2D)"
                         dataString={format2DData(pose)}
                         unit="meters"
                     />
                     <SensorCard
-                        title="Velocity (Estimated)"
+                        title="Estimated Velocity"
                         dataString={format2DData({
                             x: imuVelocityRef.current.x,
                             y: imuVelocityRef.current.y,
@@ -885,18 +1007,31 @@ export default function SLAMModule() {
                     />
                 </div>
 
-                {/* SLAM Path Trajectory using PathVisualizer */}
-                <div className="mb-2">
-                    <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-2">
-                        SLAM Path Trajectory
+                {/* Raw Sensor Data */}
+                <div className="mb-6">
+                    <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider mb-3">
+                        Raw Sensor Data
                     </h3>
-                    <PathVisualizer path={trajectory} />
+                    <SensorCard
+                        title="Accelerometer"
+                        dataString={formatSensorData(accelerometerData)}
+                        unit="m/s²"
+                    />
+                    <SensorCard
+                        title="Gyroscope (Rotation Rate)"
+                        dataString={formatSensorData(gyroscopeData)}
+                        unit="°/s"
+                    />
+                    <SensorCard
+                        title="Orientation (Compass)"
+                        dataString={`alpha: ${(orientationData ?? 0).toFixed(2)}°`}
+                        unit="0° = North"
+                    />
                 </div>
             </div>
 
             {/* Info */}
             <div className="p-4 text-xs text-gray-400 text-center">
-                <p>Visual-Inertial SLAM | Feature detection with IMU fusion</p>
                 <p className="mt-1">
                     <span className="text-yellow-400">●</span> Detected Features
                 </p>
