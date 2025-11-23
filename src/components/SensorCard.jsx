@@ -10,7 +10,7 @@ export default function SensorCard({ title, dataString, unit }) {
             <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">
                 {title}
             </h3>
-            <p className="text-xl font-mono mt-2">{dataString}</p>
+            <p className="text-sm font-mono mt-2">{dataString}</p>
             {unit && <p className="text-xs text-gray-500 mt-1">{unit}</p>}
         </div>
     );

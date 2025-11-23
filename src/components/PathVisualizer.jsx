@@ -162,8 +162,8 @@ export default function PathVisualizer({ path }) {
         const dist = Math.hypot(dx, dy);
         const factor = dist / pinchRef.current.startDist;
         const newScale = Math.min(
-          Math.max(pinchRef.current.startScale * factor, 0.1),
-          10
+          Math.max(pinchRef.current.startScale * factor, 0.0001),
+          100
         );
         setTransform((t) => ({ ...t, scale: newScale }));
         return;
@@ -196,7 +196,7 @@ export default function PathVisualizer({ path }) {
     const scaleFactor = e.deltaY > 0 ? 0.9 : 1.1; // Zoom in/out
     setTransform((t) => ({
       ...t,
-      scale: Math.min(Math.max(t.scale * scaleFactor, 0.1), 10), // Limit zoom range
+      scale: Math.min(Math.max(t.scale * scaleFactor, 0.0001), 100), // Limit zoom range
     }));
   }, []);
 
@@ -205,7 +205,7 @@ export default function PathVisualizer({ path }) {
     const scaleFactor = direction === "in" ? 1.2 : 0.8;
     setTransform((t) => ({
       ...t,
-      scale: Math.min(Math.max(t.scale * scaleFactor, 0.1), 10),
+      scale: Math.min(Math.max(t.scale * scaleFactor, 0.0001), 100),
     }));
   }, []);
 
